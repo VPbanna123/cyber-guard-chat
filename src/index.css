@@ -1,12 +1,18 @@
 @import "tailwindcss";
 
 /* Base resets and mobile viewport handling */
-html, body, #root {
+html, body {
   height: 100%;
   width: 100%;
   margin: 0;
   padding: 0;
-  overflow: hidden;
+  
+}
+
+#root {
+  width: 100%;
+  height: 100%;
+  
 }
 
 /* Handle safe area for devices with bottom bars */
@@ -55,7 +61,7 @@ select {
 
 /* Custom scrollbar styles */
 .custom-scrollbar::-webkit-scrollbar {
-  width: 8px;
+  width: 10px;
 }
 
 .custom-scrollbar::-webkit-scrollbar-track {
@@ -166,16 +172,14 @@ select {
 @media screen and (max-width: 768px) {
   /* Prevent rubber band scrolling on iOS */
   body {
-    position: fixed;
+    position: static;
     width: 100%;
-    height: 100%;
-    overflow: hidden;
+    overflow: visible;
   }
 
   #root {
     width: 100%;
-    height: 100%;
-    overflow: hidden;
+    overflow: visible;
   }
 }
 
@@ -253,7 +257,7 @@ button, a {
 
 /* Mobile keyboard handling */
 @supports (height: 100dvh) {
-  html, body, #root {
+  html {
     height: 100dvh;
   }
 }

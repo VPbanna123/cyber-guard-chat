@@ -1,3 +1,6 @@
+
+// export default ChatWindow;
+
 import { useState, useEffect } from 'react';
 import { useAuth } from '../../context/AuthContext';
 import { useSocket } from '../../context/SocketContext';
@@ -16,8 +19,10 @@ const ChatWindow = ({ selectedContact, isGroup = false, onBack }) => {
   const [replyTo, setReplyTo] = useState(null);
   const [typingUser, setTypingUser] = useState(null);
 
+  // Load messages when contact changes
   useEffect(() => {
     if (selectedContact) {
+      console.log('📥 Loading messages for:', selectedContact._id || selectedContact.id);
       loadMessages();
       
       if (isGroup) {
@@ -28,49 +33,56 @@ const ChatWindow = ({ selectedContact, isGroup = false, onBack }) => {
     }
   }, [selectedContact]);
 
+  // Setup socket listeners
   useEffect(() => {
-    if (!socket) {
-      console.log('Socket not connected');
-      return;
-    }
+    if (!socket || !selectedContact) return;
 
-    console.log('Setting up socket listeners');
+    const currentUserId = String(user?._id || user?.id);
+    const contactId = String(selectedContact._id || selectedContact.id);
 
-    const handleNewMessage = (message) => {
-      console.log('New message received:', message);
-      
-      // Check if message belongs to current conversation
-      if (isGroup) {
-        if (message.group === selectedContact?._id) {
-          setMessages(prev => {
-            // Prevent duplicates
-            const exists = prev.some(m => m._id === message._id);
-            if (exists) return prev;
-            return [...prev, message];
-          });
-        }
-      } else {
-        const currentUserId = user?.id || user?._id;
-        const contactId = selectedContact?._id || selectedContact?.id;
-        
-        const isRelevant = 
-          (message.sender === contactId || message.sender === currentUserId) &&
-          (message.recipient === contactId || message.recipient === currentUserId);
-        
-        if (isRelevant) {
-          setMessages(prev => {
-            // Prevent duplicates
-            const exists = prev.some(m => m._id === message._id);
-            if (exists) return prev;
-            return [...prev, message];
-          });
-        }
+    console.log(`\n📡 Listeners setup for contact: ${contactId}`);
+    console.log(`   Current user: ${currentUserId}`);
+
+    const handleMessageReceive = (message) => {
+      if (isGroup) return;
+
+      const senderId = String(message.sender?._id || message.sender);
+      const recipientId = String(message.recipient);
+
+      console.log(`\n📨 message:receive:`);
+      console.log(`   senderId: ${senderId}`);
+      console.log(`   recipientId: ${recipientId}`);
+
+      // Check BOTH directions
+      const condition1 = senderId === currentUserId && recipientId === contactId;
+      const condition2 = senderId === contactId && recipientId === currentUserId;
+      const isRelevant = condition1 || condition2;
+
+      console.log(`   Condition 1 (I sent): ${condition1}`);
+      console.log(`   Condition 2 (they sent): ${condition2}`);
+      console.log(`   Result: ${isRelevant}`);
+
+      if (isRelevant) {
+        console.log(`Adding message to state`);
+        setMessages(prev => {
+          //  CHECK IF ALREADY EXISTS
+          const exists = prev.some(m => m._id === message._id);
+          
+          if (exists) {
+            console.log(' Message already exists, skipping');
+            return prev;
+          }
+          
+          console.log(` Message added`);
+          return [...prev, message];
+        });
       }
     };
 
-    const handleGroupMessage = (message) => {
-      console.log('Group message received:', message);
-      if (message.group === selectedContact?._id) {
+    const handleGroupMessageReceive = (message) => {
+      if (!isGroup) return;
+      
+      if (String(message.group) === contactId) {
         setMessages(prev => {
           const exists = prev.some(m => m._id === message._id);
           if (exists) return prev;
@@ -80,30 +92,32 @@ const ChatWindow = ({ selectedContact, isGroup = false, onBack }) => {
     };
 
     const handleTyping = ({ userId, isTyping }) => {
-      if (isTyping && selectedContact && (userId === selectedContact._id || userId === selectedContact.id)) {
-        setTypingUser(selectedContact);
-      } else {
+      if (isTyping && String(userId) === contactId) {
+        setTypingUser({ username: selectedContact.username });
+      } else if (!isTyping) {
         setTypingUser(null);
       }
     };
 
     const handleGroupTyping = ({ userId, username, isTyping }) => {
-      if (isTyping && userId !== (user?.id || user?._id)) {
+      if (isTyping && String(userId) !== currentUserId) {
         setTypingUser({ username });
-      } else {
+      } else if (!isTyping) {
         setTypingUser(null);
       }
     };
 
-    socket.on('message:receive', handleNewMessage);
-    socket.on('group:message:receive', handleGroupMessage);
+    socket.on('message:receive', handleMessageReceive);
+    socket.on('group:message:receive', handleGroupMessageReceive);
     socket.on('typing:user', handleTyping);
     socket.on('group:typing:user', handleGroupTyping);
 
+    console.log(' All listeners registered');
+
     return () => {
-      console.log('Cleaning up socket listeners');
-      socket.off('message:receive', handleNewMessage);
-      socket.off('group:message:receive', handleGroupMessage);
+      console.log('🧹 Cleaning up socket listeners');
+      socket.off('message:receive', handleMessageReceive);
+      socket.off('group:message:receive', handleGroupMessageReceive);
       socket.off('typing:user', handleTyping);
       socket.off('group:typing:user', handleGroupTyping);
     };
@@ -122,10 +136,11 @@ const ChatWindow = ({ selectedContact, isGroup = false, onBack }) => {
       }
 
       if (response.data.success) {
+        console.log(' Messages loaded:', response.data.messages?.length || 0);
         setMessages(response.data.messages);
       }
     } catch (error) {
-      console.error('Error loading messages:', error);
+      console.error(' Error loading messages:', error);
     } finally {
       setLoading(false);
     }
@@ -134,8 +149,10 @@ const ChatWindow = ({ selectedContact, isGroup = false, onBack }) => {
   const handleSendMessage = (content, replyToId = null) => {
     if (!selectedContact || !user) return;
 
-    const currentUserId = user?.id || user?._id;
+    const currentUserId = user?._id || user?.id;
     const recipientId = selectedContact._id || selectedContact.id;
+
+    console.log('📤 Sending message...');
 
     const messageData = {
       sender: currentUserId,
@@ -153,20 +170,9 @@ const ChatWindow = ({ selectedContact, isGroup = false, onBack }) => {
       sendMessage(messageData);
     }
 
-    // Optimistically add message to UI
-    const tempMessage = {
-      ...messageData,
-      _id: `temp-${Date.now()}`,
-      sender: {
-        _id: currentUserId,
-        username: user.username,
-        email: user.email,
-        avatar: user.avatar
-      },
-      isRead: false
-    };
-    
-    setMessages(prev => [...prev, tempMessage]);
+    //  DON'T ADD TEMP MESSAGE - Let socket handle it!
+    // This prevents double messages
+
     setReplyTo(null);
   };
 
@@ -244,7 +250,6 @@ const ChatWindow = ({ selectedContact, isGroup = false, onBack }) => {
 
   return (
     <div className="h-full w-full flex flex-col bg-white overflow-hidden">
-      {/* Fixed Chat Header */}
       <ChatHeader 
         contact={selectedContact} 
         isGroup={isGroup}
@@ -263,12 +268,10 @@ const ChatWindow = ({ selectedContact, isGroup = false, onBack }) => {
         </div>
       ) : (
         <div className="flex-1 flex flex-col min-h-0">
-          {/* Scrollable Messages */}
           <div className="flex-1 overflow-y-auto">
             <MessageList messages={messages} typingUser={typingUser} />
           </div>
 
-          {/* Fixed Message Input */}
           <MessageInput
             onSend={handleSendMessage}
             onTyping={handleTyping}

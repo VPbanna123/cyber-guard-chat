@@ -1,52 +1,81 @@
 import Message from '../models/Message.js';
 import User from '../models/User.js';
+import Alert from '../models/Alert.js';
+import axios from 'axios';
 
-const userSockets = new Map(); // Map userId to socketId
+const ML_API_URL = process.env.ML_API_URL || 'http://localhost:8000';
+const userSockets = new Map();
+
+function generateConversationId(userId1, userId2) {
+  const sortedIds = [userId1, userId2].sort();
+  return `${sortedIds[0]}-${sortedIds[1]}`;
+}
+
+async function detectCyberbullying(conversationId, messageText) {
+  try {
+    console.log(`\n📤 Sending to ML API`);
+    console.log(`   conversation_id: ${conversationId}`);
+    console.log(`   text: ${messageText}`);
+    
+    const response = await axios.post(
+      `${ML_API_URL}/analyze-conversation`,
+      {
+        conversation_id: conversationId,
+        text: messageText
+      },
+      { timeout: 10000 }
+    );
+
+    // console.log(` ML API Response:`, response.data);
+    return response.data;
+    
+  } catch (error) {
+    // console.error(' ML API Error:', error.message);
+    return null;
+  }
+}
 
 export const setupSocketHandlers = (io) => {
   io.on('connection', (socket) => {
-    console.log(' User connected:', socket.id);
+    // console.log(' User connected:', socket.id);
 
-    // User joins
     socket.on('user:join', async (userId) => {
       try {
-        userSockets.set(userId, socket.id);
         socket.userId = userId;
+        userSockets.set(userId, socket.id);
 
-        // Update user online status
         await User.findByIdAndUpdate(userId, {
           isOnline: true,
           lastSeen: Date.now()
         });
 
-        // Broadcast to all users that this user is online
         socket.broadcast.emit('user:online', { userId, isOnline: true });
-
-        console.log(`User ${userId} joined with socket ${socket.id}`);
+        // console.log(` User ${userId} joined`);
       } catch (error) {
-        console.error('User join error:', error);
+        // console.error(' User join error:', error);
       }
     });
 
-    // Join conversation room (one-to-one)
     socket.on('conversation:join', ({ userId, otherUserId }) => {
       const roomId = [userId, otherUserId].sort().join('-');
       socket.join(roomId);
-      console.log(`User ${userId} joined conversation room: ${roomId}`);
     });
 
-    // Join group room
     socket.on('group:join', ({ groupId }) => {
       socket.join(`group-${groupId}`);
-      console.log(`User joined group room: group-${groupId}`);
     });
 
-    // Send message (one-to-one)
+    //  MESSAGE SEND - ORIGINAL LOGIC + ML API CALL
     socket.on('message:send', async (data) => {
       try {
         const { sender, recipient, content, messageType, fileUrl, fileName, fileSize, replyTo } = data;
 
-        // Create message in DB
+        console.log(`\n📨 message:send received`);
+        console.log(`   sender: ${sender}`);
+        console.log(`   recipient: ${recipient}`);
+        console.log(`   content: ${content}`);
+
+        // STEP 1: Save message to DB (ORIGINAL)
         const message = await Message.create({
           sender,
           recipient,
@@ -59,16 +88,16 @@ export const setupSocketHandlers = (io) => {
         });
 
         await message.populate('sender', 'username avatar');
-        
         if (replyTo) {
           await message.populate('replyTo', 'content sender');
         }
 
-        // Send to conversation room
+        // STEP 2: Emit to chat room (ORIGINAL)
         const roomId = [sender, recipient].sort().join('-');
         io.to(roomId).emit('message:receive', message);
+        // console.log(` Message saved & emitted: ${message._id}`);
 
-        // Send notification to recipient if online
+        // STEP 3: Send notification (ORIGINAL)
         const recipientSocketId = userSockets.get(recipient);
         if (recipientSocketId) {
           io.to(recipientSocketId).emit('notification:new', {
@@ -79,19 +108,65 @@ export const setupSocketHandlers = (io) => {
           });
         }
 
-        console.log('Message sent:', message._id);
+        //  STEP 4: SEND TO ML API FOR CYBERBULLYING DETECTION
+        console.log(`\n🔍 Sending to ML API for analysis...`);
+        const conversationId = generateConversationId(sender, recipient);
+        
+        const mlResult = await detectCyberbullying(conversationId, content);
+
+        if (!mlResult) {
+          console.log(` ML API failed, skipping detection`);
+          return;
+        }
+
+        console.log(`\n📊 ML Result:`);
+        console.log(`   is_bullying: ${mlResult.is_bullying}`);
+        console.log(`   confidence: ${mlResult.confidence_score}`);
+        console.log(`   alert_triggered: ${mlResult.alert_triggered}`);
+
+        //  STEP 5: CREATE ALERT IF TRIGGERED
+        if (mlResult.alert_triggered) {
+          console.log(`\n🚨 ALERT TRIGGERED! Creating alert in DB...`);
+          
+          const alert = await Alert.create({
+            conversationId: conversationId,
+            victim: recipient,
+            bully: sender,
+            messageContent: content,
+            bullyingType: 'general_harassment',
+            confidence: mlResult.confidence_score,
+            severity: mlResult.confidence_score > 0.95 ? 'critical' : 'high',
+            status: 'pending'
+          });
+
+          await alert.populate([
+            { path: 'victim', select: 'username email avatar' },
+            { path: 'bully', select: 'username email avatar' }
+          ]);
+
+          // console.log(` Alert created: ${alert._id}`);
+          // console.log(`   Victim: ${alert.victim?.username}`);
+          // console.log(`   Bully: ${alert.bully?.username}`);
+
+          //  STEP 6: EMIT TO PARENT DASHBOARD
+          io.to('parent-dashboard').emit('alert:new', {
+            alert: alert,
+            conversationId: conversationId,
+            timestamp: new Date()
+          });
+
+          console.log(` Alert emitted to parent dashboard\n`);
+        }
+
       } catch (error) {
-        console.error('Send message error:', error);
-        socket.emit('message:error', { message: 'Failed to send message' });
+        console.error(' Send message error:', error);
       }
     });
 
-    // Send group message
     socket.on('group:message:send', async (data) => {
       try {
         const { sender, group, content, messageType, fileUrl, fileName, fileSize, replyTo } = data;
 
-        // Create message in DB
         const message = await Message.create({
           sender,
           group,
@@ -104,22 +179,16 @@ export const setupSocketHandlers = (io) => {
         });
 
         await message.populate('sender', 'username avatar');
-        
         if (replyTo) {
           await message.populate('replyTo', 'content sender');
         }
 
-        // Send to group room
         io.to(`group-${group}`).emit('group:message:receive', message);
-
-        console.log('Group message sent:', message._id);
       } catch (error) {
         console.error('Send group message error:', error);
-        socket.emit('message:error', { message: 'Failed to send group message' });
       }
     });
 
-    // Typing indicator (one-to-one)
     socket.on('typing:start', ({ userId, otherUserId }) => {
       const recipientSocketId = userSockets.get(otherUserId);
       if (recipientSocketId) {
@@ -134,7 +203,6 @@ export const setupSocketHandlers = (io) => {
       }
     });
 
-    // Typing indicator (group)
     socket.on('group:typing:start', ({ userId, groupId, username }) => {
       socket.to(`group-${groupId}`).emit('group:typing:user', { userId, username, isTyping: true });
     });
@@ -143,7 +211,6 @@ export const setupSocketHandlers = (io) => {
       socket.to(`group-${groupId}`).emit('group:typing:user', { userId, isTyping: false });
     });
 
-    // Mark message as read
     socket.on('message:read', async ({ messageId, userId }) => {
       try {
         const message = await Message.findById(messageId);
@@ -151,7 +218,6 @@ export const setupSocketHandlers = (io) => {
           message.isRead = true;
           await message.save();
 
-          // Notify sender
           const senderSocketId = userSockets.get(message.sender.toString());
           if (senderSocketId) {
             io.to(senderSocketId).emit('message:read:confirm', { messageId });
@@ -162,32 +228,26 @@ export const setupSocketHandlers = (io) => {
       }
     });
 
-    // User disconnect
+    socket.on('join:parent-dashboard', () => {
+      socket.join('parent-dashboard');
+      console.log('👨‍👩‍👧 Parent joined dashboard');
+    });
+
     socket.on('disconnect', async () => {
       try {
         const userId = socket.userId;
-        
         if (userId) {
           userSockets.delete(userId);
-
-          // Update user offline status
           await User.findByIdAndUpdate(userId, {
             isOnline: false,
             lastSeen: Date.now()
           });
-
-          // Broadcast to all users that this user is offline
           socket.broadcast.emit('user:offline', { userId, isOnline: false });
-
-          console.log(`User ${userId} disconnected`);
+          console.log(` User ${userId} disconnected`);
         }
-
-        console.log('❌ User disconnected:', socket.id);
       } catch (error) {
         console.error('Disconnect error:', error);
       }
     });
   });
 };
-
-export { userSockets };

@@ -1,19 +1,21 @@
+
 import express from 'express';
 import { createServer } from 'http';
 import { Server } from 'socket.io';
 import cors from 'cors';
 import dotenv from 'dotenv';
-// import connectDB from './config/db.js';
 import connectDB from './db/connectDb.js';
 import { setupSocketHandlers } from './socket/socketHandler.js';
 import { errorHandler, notFound } from './middleware/errorHandler.js';
 import cookieParser from 'cookie-parser'; 
+
 // Routes
 import authRoutes from './routes/authRoutes.js';
 import userRoutes from './routes/userRoutes.js';
 import messageRoutes from './routes/messageRoutes.js';
 import groupRoutes from './routes/groupRoutes.js';
-
+// import alertRoutes from './routes/alerts.js';  // 🔥 NEW - Add this line
+import alertRoutes from './routes/alert.js'
 // Load environment variables
 dotenv.config();
 
@@ -41,9 +43,9 @@ app.use(cors({
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 app.use(cookieParser());
+
 // Request logging
 app.use((req, res, next) => {
-  // console.log(`${req.method} ${req.path}`);
   next();
 });
 
@@ -60,6 +62,7 @@ app.use('/api/auth', authRoutes);
 app.use('/api/users', userRoutes);
 app.use('/api/messages', messageRoutes);
 app.use('/api/groups', groupRoutes);
+app.use('/api/alerts', alertRoutes);  // 🔥 NEW - Add this line
 
 // Error handling
 app.use(notFound);
@@ -76,11 +79,12 @@ httpServer.listen(PORT, () => {
   console.log(`📡 Socket.IO server is ready`);
   console.log(`🌍 Environment: ${process.env.NODE_ENV || 'development'}`);
   console.log(`🔗 API URL: http://localhost:${PORT}`);
-  console.log(`🔗 Client URL: ${process.env.CLIENT_URL || 'http://localhost:5173'}\n`);
+  console.log(`🔗 Client URL: ${process.env.CLIENT_URL || 'http://localhost:5173'}`);
+  console.log(`🤖 ML API URL: ${process.env.ML_API_URL || 'http://localhost:8000'}\n`);  // 🔥 NEW - Add this line
 });
 
 // Handle unhandled promise rejections
 process.on('unhandledRejection', (err) => {
-  console.error('❌ Unhandled Rejection:', err);
+  console.error(' Unhandled Rejection:', err);
   httpServer.close(() => process.exit(1));
 });
