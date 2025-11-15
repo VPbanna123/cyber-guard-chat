@@ -1,6 +1,7 @@
 # Ignore virtual environment
 venv/
-
+myenv/
+myenv
 # Ignore model directory
 model/
 

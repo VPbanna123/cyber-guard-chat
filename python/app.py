@@ -11,7 +11,7 @@ app = FastAPI(
     version="1.0.0"
 )
 
-MODEL_PATH = r"C:\Users\vijay\web dev course\chat_app\python\model"
+MODEL_PATH = r"C:\Users\vijay\OneDrive\Desktop\cyber\GuardianAI\python\model"
 
 try:
     print(f"Loading model from: {MODEL_PATH}")
